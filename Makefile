@@ -24,7 +24,6 @@ FreeTetherPrefs_PRIVATE_FRAMEWORKS = Preferences
 FreeTetherPrefs_INSTALL_PATH = /Library/PreferenceBundles
 FreeTetherPrefs_CFLAGS = -fobjc-arc
 FreeTetherPrefs_RESOURCE_DIRS = Preferences/Resources
-FreeTetherPrefs_PLIST_NAME = Preferences/entry
 
 BUNDLE_NAME += FreeTetherCC
 FreeTetherCC_FILES = $(wildcard CCModule/*.m)
