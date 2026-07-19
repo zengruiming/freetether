@@ -1,0 +1,9 @@
+Package: com.freetether.probe
+Name: FTProbe
+Version: 0.0.1
+Architecture: iphoneos-arm64
+Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 15.0)
+Description: FreeTether probe tool — dumps CommCenter symbols for reverse engineering. Dev-only, do not distribute.
+Maintainer: FreeTether Contributors
+Author: FreeTether Contributors
+Section: Development

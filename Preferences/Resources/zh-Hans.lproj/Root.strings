@@ -1,0 +1,22 @@
+"HOTSPOT_SETTINGS" = "热点设置";
+"ENABLED" = "启用 FreeTether";
+"FORCE_HOTSPOT" = "强制启用热点";
+"BYPASS_ENTITLEMENT" = "绕过运营商验证";
+"MASK_TRAFFIC" = "热点流量伪装";
+"APN_SETTINGS" = "APN 配置";
+"CUSTOM_APN" = "自定义热点 APN";
+"APN_PLACEHOLDER" = "留空则使用数据 APN";
+"ADVANCED" = "高级";
+"DEBUG_LOG" = "调试日志";
+"ABOUT" = "关于";
+"GITHUB" = "GitHub 仓库";
+"SHARING" = "网络共享";
+"VPN_SHARING" = "共享 VPN 连接";
+"WIFI_SHARING" = "共享 Wi-Fi 连接";
+
+/* W10 fix: 页脚文本本地化 */
+"FORCE_HOTSPOT_FOOTER" = "覆盖运营商限制，在设置中启用个人热点。";
+"BYPASS_ENTITLEMENT_FOOTER" = "启用网络共享时跳过运营商权限验证。";
+"MASK_TRAFFIC_FOOTER" = "将共享流量通过数据 APN 路由以避免运营商检测，可能会略微降低速度。";
+"SHARING_FOOTER" = "高级功能。VPN 共享将热点流量通过 VPN 路由；Wi-Fi 共享可转发现有的 Wi-Fi 连接。";
+"ABOUT_FOOTER" = "FreeTether v0.1.0 — GPL-3.0";

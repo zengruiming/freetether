@@ -1,0 +1,95 @@
+name: Build DEB Package
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14  # Apple Silicon runner (M1)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Theos
+        uses: actions/cache@v4
+        id: theos-cache
+        with:
+          path: ~/theos
+          key: theos-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
+
+      - name: Install Theos (if not cached)
+        if: steps.theos-cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          export THEOS=~/theos
+          git clone --recursive https://github.com/theos/theos.git $THEOS
+
+          # 下载 iOS SDK
+          curl -fsSL "https://github.com/theos/sdks/archive/master.tar.gz" -o sdks.tar.gz
+          TMP_DIR=$(mktemp -d)
+          tar xzf sdks.tar.gz -C "$TMP_DIR"
+          mv "$TMP_DIR"/sdks-master/*.sdk "$THEOS/sdks/" 2>/dev/null || true
+          rm -rf sdks.tar.gz "$TMP_DIR"
+
+      - name: Install dpkg
+        run: brew install dpkg ldid
+
+      - name: Build Package (rootless)
+        run: |
+          export THEOS=~/theos
+          export PATH="$THEOS/bin:$PATH"
+          make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless SUBPROJECTS=
+
+      - name: Save rootless deb
+        id: rootless
+        run: |
+          mkdir -p dist
+          SRC=$(ls -t packages/*.deb | head -1)
+          BASE=$(basename "$SRC" .deb)
+          DEST="dist/${BASE}_rootless.deb"
+          cp "$SRC" "$DEST"
+          echo "file=$DEST" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$DEST")" >> "$GITHUB_OUTPUT"
+          echo "📦 Rootless: $(basename "$DEST")"
+
+      - name: Build Package (rootful)
+        run: |
+          export THEOS=~/theos
+          export PATH="$THEOS/bin:$PATH"
+          make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME= SUBPROJECTS=
+
+      - name: Save rootful deb
+        id: rootful
+        run: |
+          SRC=$(ls -t packages/*.deb | head -1)
+          BASE=$(basename "$SRC" .deb)
+          DEST="dist/${BASE}_rootful.deb"
+          cp "$SRC" "$DEST"
+          echo "file=$DEST" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$DEST")" >> "$GITHUB_OUTPUT"
+          echo "📦 Rootful: $(basename "$DEST")"
+
+      - name: Upload artifact (rootless)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.rootless.outputs.name }}
+          path: ${{ steps.rootless.outputs.file }}
+
+      - name: Upload artifact (rootful)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.rootful.outputs.name }}
+          path: ${{ steps.rootful.outputs.file }}
+
+      # 推送 tag 时自动创建 GitHub Release
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.deb
+          generate_release_notes: true

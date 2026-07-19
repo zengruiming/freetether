@@ -1,0 +1,6 @@
+.theos/
+packages/
+.idea/
+/.codefuse/
+/.theos/
+/docs/

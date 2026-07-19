@@ -1,0 +1,22 @@
+"HOTSPOT_SETTINGS" = "Hotspot Settings";
+"ENABLED" = "Enable FreeTether";
+"FORCE_HOTSPOT" = "Force Enable Hotspot";
+"BYPASS_ENTITLEMENT" = "Bypass Carrier Check";
+"MASK_TRAFFIC" = "Mask Hotspot Traffic";
+"APN_SETTINGS" = "APN Configuration";
+"CUSTOM_APN" = "Custom Hotspot APN";
+"APN_PLACEHOLDER" = "Leave empty to use data APN";
+"ADVANCED" = "Advanced";
+"DEBUG_LOG" = "Debug Logging";
+"ABOUT" = "About";
+"GITHUB" = "GitHub Repository";
+"SHARING" = "Network Sharing";
+"VPN_SHARING" = "Share VPN Connection";
+"WIFI_SHARING" = "Share Wi-Fi Connection";
+
+/* W10 fix: footer text localization keys */
+"FORCE_HOTSPOT_FOOTER" = "Override carrier restrictions to enable Personal Hotspot in Settings.";
+"BYPASS_ENTITLEMENT_FOOTER" = "Skip carrier entitlement verification when enabling tethering.";
+"MASK_TRAFFIC_FOOTER" = "Route tethering traffic through the data APN to avoid carrier detection. May slightly reduce speed.";
+"SHARING_FOOTER" = "Advanced features. VPN Sharing routes hotspot traffic through your VPN. Wi-Fi Sharing re-shares an existing Wi-Fi connection.";
+"ABOUT_FOOTER" = "FreeTether v0.1.0 — GPL-3.0";

@@ -1,0 +1,12 @@
+Package: com.freetether.tweak
+Name: FreeTether
+Version: 0.1.0
+Architecture: iphoneos-arm64
+Depends: mobilesubstrate (>= 0.9.5000) | ellekit (>= 1.0), firmware (>= 15.0), preferenceloader
+Recommends: ccsupport
+Description: Open-source personal hotspot unlocker for palera1n rootless. Bypass carrier tethering restrictions.
+Maintainer: FreeTether Contributors
+Author: FreeTether Contributors
+Section: Networking
+Homepage: https://github.com/user/FreeTether
+License: GPL-3.0
