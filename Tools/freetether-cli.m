@@ -12,6 +12,14 @@
 #define FT_PREFS_PATH @"/var/mobile/Library/Preferences/com.freetether.plist"
 #define NOTIFY_KEY "com.freetether.prefschanged"
 
+#import <ifaddrs.h>
+#import <net/if.h>
+#import <arpa/inet.h>
+#import <dlfcn.h>
+#import <sys/sysctl.h>
+#import <spawn.h>
+#import <sys/wait.h>
+
 static void notifyPrefsChanged() {
     CFNotificationCenterPostNotification(
         CFNotificationCenterGetDarwinNotifyCenter(),
@@ -51,6 +59,7 @@ static void printUsage() {
         "  disable             Disable FreeTether (kill switch)\n"
         "  set <key> <on|off>  Toggle a sub-feature\n"
         "  debug on|off        Enable/disable debug logging\n"
+        "  diagnose            Dump network interfaces, pfctl, and CoreTelephony symbols\n"
         "\n"
         "Sub-feature keys for 'set':\n"
         "  vpnSharing          Share VPN connection over hotspot\n"
@@ -73,6 +82,136 @@ static void printStatus() {
     printf("  Debug Log:            %s\n", debug   ? "YES" : "NO");
     printf("\n  Prefs file: %s\n",
            [FT_PREFS_PATH UTF8String]);
+}
+
+// ---- diagnose ----
+
+extern char **environ;
+
+static void runCmd(const char *label, const char *path, const char *const argv[]) {
+    printf("--- %s ---\n", label);
+    pid_t pid = 0;
+    int status = 0;
+    if (posix_spawn(&pid, path, NULL, NULL, (char *const *)argv, environ) == 0) {
+        waitpid(pid, &status, 0);
+    } else {
+        printf("  (failed to spawn %s)\n", path);
+    }
+    printf("\n");
+}
+
+static void printDiagnose() {
+    printStatus();
+
+    // 1. Network interfaces
+    printf("\n=== Network Interfaces ===\n");
+    struct ifaddrs *ifs = NULL;
+    if (getifaddrs(&ifs) == 0) {
+        for (struct ifaddrs *ifp = ifs; ifp; ifp = ifp->ifa_next) {
+            if (!ifp->ifa_name) continue;
+            const char *name = ifp->ifa_name;
+            unsigned int flags = ifp->ifa_flags;
+            BOOL up = (flags & IFF_UP) != 0;
+            BOOL ptp = (flags & IFF_POINTOPOINT) != 0;
+
+            // Only show relevant interfaces
+            BOOL relevant = NO;
+            if (strncmp(name, "utun", 4) == 0 ||
+                strncmp(name, "bridge", 6) == 0 ||
+                strcmp(name, "en0") == 0 ||
+                strncmp(name, "pdp_ip", 6) == 0 ||
+                strncmp(name, "ipsec", 5) == 0) {
+                relevant = YES;
+            }
+            if (!relevant) continue;
+
+            char addrBuf[INET6_ADDRSTRLEN] = "(no addr)";
+            const char *family = "";
+            if (ifp->ifa_addr) {
+                if (ifp->ifa_addr->sa_family == AF_INET) {
+                    struct sockaddr_in *sin = (struct sockaddr_in *)ifp->ifa_addr;
+                    inet_ntop(AF_INET, &sin->sin_addr, addrBuf, sizeof(addrBuf));
+                    family = "IPv4";
+                } else if (ifp->ifa_addr->sa_family == AF_INET6) {
+                    struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)ifp->ifa_addr;
+                    inet_ntop(AF_INET6, &sin6->sin6_addr, addrBuf, sizeof(addrBuf));
+                    family = "IPv6";
+                } else {
+                    continue;  // skip link-layer entries for brevity
+                }
+            }
+
+            printf("  %-12s %s  %-5s  %s  %s\n", name,
+                   up ? "UP  " : "DOWN", family, addrBuf,
+                   ptp ? "(point-to-point)" : "");
+        }
+        freeifaddrs(ifs);
+    } else {
+        printf("  (getifaddrs failed)\n");
+    }
+
+    // 2. IP forwarding
+    printf("\n=== IP Forwarding ===\n");
+    {
+        int fwd4 = 0;
+        size_t len4 = sizeof(fwd4);
+        int mib[] = { CTL_NET, PF_INET, IPPROTO_IP, IPCTL_FORWARDING };
+        if (sysctl(mib, 4, &fwd4, &len4, NULL, 0) == 0) {
+            printf("  net.inet.ip.forwarding = %d\n", fwd4);
+        }
+        int fwd6 = 0;
+        size_t len6 = sizeof(fwd6);
+        if (sysctlbyname("net.inet6.ip6.forwarding", &fwd6, &len6, NULL, 0) == 0) {
+            printf("  net.inet6.ip6.forwarding = %d\n", fwd6);
+        }
+    }
+
+    // 3. pfctl anchor status
+    printf("\n=== pfctl anchor (com.freetether) ===\n");
+    {
+        const char *pf1[] = { "/sbin/pfctl", "-s", "info", NULL };
+        runCmd("pfctl -s info", pf1[0], pf1);
+        const char *pf2[] = { "/sbin/pfctl", "-a", "com.freetether", "-s", "nat", NULL };
+        runCmd("pfctl -a com.freetether -s nat", pf2[0], pf2);
+        const char *pf3[] = { "/sbin/pfctl", "-a", "com.freetether", "-s", "rules", NULL };
+        runCmd("pfctl -a com.freetether -s rules", pf3[0], pf3);
+    }
+
+    // 4. CoreTelephony symbols
+    printf("=== CoreTelephony Symbols ===\n");
+    {
+        void *ct = dlopen("/System/Library/Frameworks/CoreTelephony.framework/CoreTelephony", RTLD_LAZY);
+        if (!ct) {
+            printf("  (failed to dlopen CoreTelephony)\n");
+        } else {
+            const char *syms[] = {
+                "CTCarrierSpaceGetSetting",
+                "CTCarrierSpaceSetSetting",
+                "CTServerConnectionSetTetheredModeEnabled",
+                "CTServerConnectionGetTetheredModeEnabled",
+                "CTRegistrationGetCarrierBundleInfo",
+                "CTRegistrationGetDataStatus",
+                "CTServerConnectionSetPersistentTetheringAPN",
+                NULL,
+            };
+            for (int i = 0; syms[i]; i++) {
+                void *p = dlsym(ct, syms[i]);
+                printf("  %-50s %s\n", syms[i], p ? "FOUND" : "NOT FOUND");
+            }
+            dlclose(ct);
+        }
+    }
+
+    // 5. Process check
+    printf("\n=== Process Check ===\n");
+    {
+        const char *ps[] = { "/bin/ps", "-eo", "pid,comm", NULL };
+        runCmd("Running daemons", ps[0], ps);
+    }
+
+    printf("=== Recent [FreeTether] logs (last 30 lines) ===\n");
+    printf("  Run: grep FreeTether /var/log/syslog | tail -30\n");
+    printf("  Or:  oslog --predicate 'eventMessage CONTAINS \"FreeTether\"' --last 5m\n");
 }
 
 static BOOL setKey(NSString *key, id value) {
@@ -164,6 +303,8 @@ int main(int argc, char *argv[]) {
                 printUsage();
                 return 1;
             }
+        } else if ([cmd isEqualToString:@"diagnose"]) {
+            printDiagnose();
         } else {
             printUsage();
             return 1;

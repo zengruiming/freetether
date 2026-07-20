@@ -168,9 +168,19 @@
 }
 
 - (void)openPersonalHotspot {
-    // Try multiple URL schemes — behaviour varies across iOS versions and
-    // jailbreak environments. In particular, Settings.app may ignore its own
-    // App-Prefs: scheme when the bundle is hosted inside the same process.
+    [self _openHotspotSettings];
+}
+
+// Some iOS versions dispatch PSButtonCell actions with a specifier argument.
+// Implement both selector forms so the button works regardless.
+- (void)openPersonalHotspot:(PSSpecifier *)specifier {
+    [self _openHotspotSettings];
+}
+
+- (void)_openHotspotSettings {
+    // Don't use canOpenURL: — Settings.app doesn't list its own App-Prefs:
+    // scheme in LSApplicationQueriesSchemes, so canOpenURL: returns NO even
+    // though openURL: would succeed.
     NSArray *schemes = @[
         @"App-Prefs:root=INTERNET_TETHERING",
         @"prefs:root=INTERNET_TETHERING",
@@ -178,26 +188,31 @@
     ];
 
     UIApplication *app = [UIApplication sharedApplication];
+    __block BOOL tried = NO;
+
     for (NSString *scheme in schemes) {
         NSURL *url = [NSURL URLWithString:scheme];
-        if (url && [app canOpenURL:url]) {
-            [app openURL:url options:@{} completionHandler:^(BOOL success) {
-                if (!success) {
-                    NSLog(@"[FreeTether][Prefs] openURL %@ returned NO", scheme);
-                }
-            }];
-            return;
-        }
+        if (!url) continue;
+
+        tried = YES;
+        [app openURL:url options:@{} completionHandler:^(BOOL success) {
+            if (success) {
+                NSLog(@"[FreeTether][Prefs] Opened %@", scheme);
+            }
+        }];
+        // openURL: is async — try the first valid URL and return
+        return;
     }
 
-    // All schemes failed — show an alert so the user knows something went wrong
-    UIAlertController *alert = [UIAlertController
-        alertControllerWithTitle:FTLocalize(@"HOTSPOT_OPEN_FAILED_TITLE")
-        message:FTLocalize(@"HOTSPOT_OPEN_FAILED_MSG")
-        preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK"
-        style:UIAlertActionStyleDefault handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
+    if (!tried) {
+        UIAlertController *alert = [UIAlertController
+            alertControllerWithTitle:FTLocalize(@"HOTSPOT_OPEN_FAILED_TITLE")
+            message:FTLocalize(@"HOTSPOT_OPEN_FAILED_MSG")
+            preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK"
+            style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+    }
 }
 
 - (void)openGitHub {
@@ -205,6 +220,10 @@
         openURL:[NSURL URLWithString:@"https://github.com/anthropics/FreeTether"]
         options:@{}
         completionHandler:nil];
+}
+
+- (void)openGitHub:(PSSpecifier *)specifier {
+    [self openGitHub];
 }
 
 @end
