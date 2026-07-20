@@ -1,0 +1,22 @@
+"MASTER_CONTROL" = "通用";
+"ENABLED" = "启用 FreeTether";
+"PERSONAL_HOTSPOT" = "个人热点";
+"OPEN_HOTSPOT_SETTINGS" = "打开个人热点设置";
+"ADVANCED" = "高级";
+"DEBUG_LOG" = "调试日志";
+"ABOUT" = "关于";
+"GITHUB" = "GitHub 仓库";
+"SHARING" = "网络共享";
+"VPN_SHARING" = "共享 VPN 连接";
+"WIFI_SHARING" = "共享 Wi-Fi 连接";
+
+"PERSONAL_HOTSPOT_FOOTER" = "打开系统个人热点设置页面。Wi-Fi 版 iPad 可能没有此选项。";
+"SHARING_FOOTER" = "VPN 共享将热点流量通过 VPN 路由；Wi-Fi 共享可转发现有的 Wi-Fi 连接。";
+"ABOUT_FOOTER" = "FreeTether v0.1.0 — GPL-3.0";
+
+"VPN_NOT_CONNECTED" = "VPN 未连接";
+"VPN_NOT_CONNECTED_MSG" = "请先连接 VPN，再开启共享 VPN 功能。";
+"WIFI_NOT_CONNECTED" = "Wi-Fi 未连接";
+"WIFI_NOT_CONNECTED_MSG" = "请先连接 Wi-Fi，再开启共享 Wi-Fi 功能。";
+"HOTSPOT_OPEN_FAILED_TITLE" = "无法打开";
+"HOTSPOT_OPEN_FAILED_MSG" = "无法打开个人热点设置页面。请手动前往"设置 > 个人热点"。";

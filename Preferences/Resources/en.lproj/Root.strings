@@ -1,0 +1,22 @@
+"MASTER_CONTROL" = "General";
+"ENABLED" = "Enable FreeTether";
+"PERSONAL_HOTSPOT" = "Personal Hotspot";
+"OPEN_HOTSPOT_SETTINGS" = "Open Hotspot Settings";
+"ADVANCED" = "Advanced";
+"DEBUG_LOG" = "Debug Logging";
+"ABOUT" = "About";
+"GITHUB" = "GitHub Repository";
+"SHARING" = "Network Sharing";
+"VPN_SHARING" = "Share VPN Connection";
+"WIFI_SHARING" = "Share Wi-Fi Connection";
+
+"PERSONAL_HOTSPOT_FOOTER" = "Open the system Personal Hotspot settings page. Wi-Fi-only iPads may not have this option.";
+"SHARING_FOOTER" = "VPN Sharing routes hotspot traffic through your VPN. Wi-Fi Sharing re-shares an existing Wi-Fi connection.";
+"ABOUT_FOOTER" = "FreeTether v0.1.0 — GPL-3.0";
+
+"VPN_NOT_CONNECTED" = "VPN Not Connected";
+"VPN_NOT_CONNECTED_MSG" = "Please connect to a VPN before enabling VPN sharing.";
+"WIFI_NOT_CONNECTED" = "Wi-Fi Not Connected";
+"WIFI_NOT_CONNECTED_MSG" = "Please connect to Wi-Fi before enabling Wi-Fi sharing.";
+"HOTSPOT_OPEN_FAILED_TITLE" = "Cannot Open";
+"HOTSPOT_OPEN_FAILED_MSG" = "Unable to open Personal Hotspot settings. Please navigate to Settings > Personal Hotspot manually.";
