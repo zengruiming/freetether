@@ -2,27 +2,27 @@
 
 #import "FTCCToggle.h"
 #import <UIKit/UIKit.h>
-#import <stdatomic.h>
 
-#define FT_PREFS_DOMAIN  CFSTR("com.freetether")
 #define FT_NOTIFY_PREFS  CFSTR("com.freetether.prefschanged")
+// CC module runs as mobile user — same path, consistent with Settings and Tweak
+#define FT_PREFS_PATH @"/var/mobile/Library/Preferences/com.freetether.plist"
 
 // Cached state to avoid CFPreferences calls on every isSelected
 static BOOL sCachedEnabled = YES;
 static BOOL sCacheLoaded   = NO;
 
-// C3 fix: prevent self-trigger when setSelected: posts notification
-// Use atomic flag to avoid race between main thread and notification callback
-static _Atomic BOOL sIgnoreNextNotification = NO;
+// When YES, setSelected: only updates UI (skip plist write + notification).
+// Set by the notification callback to avoid re-entering the write+notify path.
+static BOOL sUpdatingFromNotification = NO;
 
-// Read a single preference via CFPreferences (consistent with Tweak.x)
-static id readPref(CFStringRef key) {
-    return (__bridge_transfer id)CFPreferencesCopyAppValue(key, FT_PREFS_DOMAIN);
+// Read a single preference from the shared plist file
+static id readPref(NSString *key) {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:FT_PREFS_PATH];
+    return dict[key];
 }
 
 static void reloadCachedState() {
-    CFPreferencesAppSynchronize(FT_PREFS_DOMAIN);
-    id val = readPref(CFSTR("enabled"));
+    id val = readPref(@"enabled");
     sCachedEnabled = (val == nil) || [val boolValue];
     sCacheLoaded = YES;
 }
@@ -32,20 +32,21 @@ static __weak FTCCToggle *sSharedToggle = nil;
 
 static void prefsChangedCallback(CFNotificationCenterRef center, void *observer,
     CFNotificationName name, const void *object, CFDictionaryRef userInfo) {
-    // C3 fix: skip if this notification was posted by our own setSelected:
-    if (sIgnoreNextNotification) {
-        sIgnoreNextNotification = NO;
-        return;
-    }
+    BOOL oldValue = sCachedEnabled;
     reloadCachedState();
-    FTCCToggle *toggle = sSharedToggle;
-    if (toggle) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            // C4 fix: CCUIToggleModule does not have a public refreshState method.
-            // Calling it would cause an unrecognized selector crash.
-            // Use setSelected: to update the toggle UI state instead.
-            [toggle setSelected:sCachedEnabled];
-        });
+    // Only update UI if the value actually changed
+    if (oldValue != sCachedEnabled) {
+        FTCCToggle *toggle = sSharedToggle;
+        if (toggle) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                sUpdatingFromNotification = YES;
+                @try {
+                    [toggle setSelected:sCachedEnabled];
+                } @finally {
+                    sUpdatingFromNotification = NO;
+                }
+            });
+        }
     }
 }
 
@@ -67,7 +68,8 @@ static void prefsChangedCallback(CFNotificationCenterRef center, void *observer,
 }
 
 - (void)dealloc {
-    sSharedToggle = nil;
+    // Don't nil sSharedToggle — if a new instance was already created,
+    // its init set sSharedToggle. __weak zeroing handles the normal case.
     CFNotificationCenterRemoveObserver(
         CFNotificationCenterGetDarwinNotifyCenter(),
         (__bridge void *)self, FT_NOTIFY_PREFS, NULL);
@@ -91,9 +93,17 @@ static void prefsChangedCallback(CFNotificationCenterRef center, void *observer,
 - (void)setSelected:(BOOL)selected {
     [super setSelected:selected];
 
-    // Write via CFPreferences (consistent with Tweak.x)
-    CFPreferencesSetAppValue(CFSTR("enabled"), (__bridge CFPropertyListRef)@(selected), FT_PREFS_DOMAIN);
-    BOOL ok = CFPreferencesAppSynchronize(FT_PREFS_DOMAIN);
+    // When called from notification callback, just update UI — don't re-write
+    // the plist or re-post the notification (avoids reentrant write+notify cycle).
+    if (sUpdatingFromNotification) {
+        sCachedEnabled = selected;
+        return;
+    }
+
+    // Write via plist file (consistent with Settings and Tweak)
+    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:FT_PREFS_PATH] ?: [NSMutableDictionary dictionary];
+    dict[@"enabled"] = @(selected);
+    BOOL ok = [dict writeToFile:FT_PREFS_PATH atomically:YES];
 
     if (ok) {
         sCachedEnabled = selected;
@@ -103,9 +113,6 @@ static void prefsChangedCallback(CFNotificationCenterRef center, void *observer,
         [super setSelected:sCachedEnabled];
         return;  // Don't notify on failure
     }
-
-    // C3 fix: mark to ignore the notification we are about to post
-    sIgnoreNextNotification = YES;
 
     // Notify tweak of config change
     CFNotificationCenterPostNotification(

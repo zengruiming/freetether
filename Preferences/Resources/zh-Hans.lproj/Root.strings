@@ -1,11 +1,7 @@
-"HOTSPOT_SETTINGS" = "热点设置";
+"MASTER_CONTROL" = "通用";
 "ENABLED" = "启用 FreeTether";
-"FORCE_HOTSPOT" = "强制启用热点";
-"BYPASS_ENTITLEMENT" = "绕过运营商验证";
-"MASK_TRAFFIC" = "热点流量伪装";
-"APN_SETTINGS" = "APN 配置";
-"CUSTOM_APN" = "自定义热点 APN";
-"APN_PLACEHOLDER" = "留空则使用数据 APN";
+"PERSONAL_HOTSPOT" = "个人热点";
+"OPEN_HOTSPOT_SETTINGS" = "打开个人热点设置";
 "ADVANCED" = "高级";
 "DEBUG_LOG" = "调试日志";
 "ABOUT" = "关于";
@@ -14,9 +10,6 @@
 "VPN_SHARING" = "共享 VPN 连接";
 "WIFI_SHARING" = "共享 Wi-Fi 连接";
 
-/* W10 fix: 页脚文本本地化 */
-"FORCE_HOTSPOT_FOOTER" = "覆盖运营商限制，在设置中启用个人热点。";
-"BYPASS_ENTITLEMENT_FOOTER" = "启用网络共享时跳过运营商权限验证。";
-"MASK_TRAFFIC_FOOTER" = "将共享流量通过数据 APN 路由以避免运营商检测，可能会略微降低速度。";
-"SHARING_FOOTER" = "高级功能。VPN 共享将热点流量通过 VPN 路由；Wi-Fi 共享可转发现有的 Wi-Fi 连接。";
+"PERSONAL_HOTSPOT_FOOTER" = "打开系统个人热点设置页面。Wi-Fi 版 iPad 可能没有此选项。";
+"SHARING_FOOTER" = "VPN 共享将热点流量通过 VPN 路由；Wi-Fi 共享可转发现有的 Wi-Fi 连接。";
 "ABOUT_FOOTER" = "FreeTether v0.1.0 — GPL-3.0";

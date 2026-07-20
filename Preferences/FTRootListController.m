@@ -5,45 +5,38 @@
 #import <UIKit/UIKit.h>
 #import <Preferences/PSSpecifier.h>
 
-#define FT_PREFS_DOMAIN  CFSTR("com.freetether")
 #define FT_NOTIFY_PREFS  "com.freetether.prefschanged"
+// Write prefs to mobile's domain file — system daemons (root) read this
+// same file via NSDictionary, bypassing CFPreferences' per-UID isolation.
+#define FT_PREFS_PATH @"/var/mobile/Library/Preferences/com.freetether.plist"
 
 @implementation FTRootListController
 
 - (NSArray *)specifiers {
     if (!_specifiers) {
         _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
-
-        // W10 fix: manually localize placeholder for PSEditTextCell
-        // (PSListController does not auto-localize the placeholder property)
-        for (PSSpecifier *spec in _specifiers) {
-            if ([[spec propertyForKey:@"key"] isEqualToString:@"customAPN"]) {
-                NSString *placeholder = [spec propertyForKey:@"placeholder"];
-                if (placeholder) {
-                    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
-                    NSString *localized = [bundle localizedStringForKey:placeholder value:placeholder table:@"Root"];
-                    [spec setProperty:localized forKey:@"placeholder"];
-                }
-                break;
-            }
-        }
     }
     return _specifiers;
 }
 
-// W9 fix: use CFPreferences API for cross-user compatibility,
-// consistent with Tweak.x preference reads
+// F1 fix: refresh specifier values when returning to the settings pane.
+// If the user toggled FreeTether via CC while Settings was in the background,
+// the switches would show stale state without this.
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self reloadSpecifiers];
+}
+
 - (id)readPreferenceValue:(PSSpecifier *)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
     if (!key) return [super readPreferenceValue:specifier];
 
-    CFPreferencesAppSynchronize(FT_PREFS_DOMAIN);
-    id value = (__bridge_transfer id)CFPreferencesCopyAppValue((__bridge CFStringRef)key, FT_PREFS_DOMAIN);
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:FT_PREFS_PATH];
+    id value = dict[key];
     if (value) return value;
 
     // Fall back to default value from specifier
-    id defaultValue = [specifier propertyForKey:@"default"];
-    return defaultValue;
+    return [specifier propertyForKey:@"default"];
 }
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
@@ -53,10 +46,15 @@
         return;
     }
 
-    CFPreferencesSetAppValue((__bridge CFStringRef)key,
-                             (__bridge CFPropertyListRef)value,
-                             FT_PREFS_DOMAIN);
-    CFPreferencesAppSynchronize(FT_PREFS_DOMAIN);
+    // Read existing prefs, merge new value, write back atomically
+    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:FT_PREFS_PATH] ?: [NSMutableDictionary dictionary];
+    dict[key] = value;
+    if (![dict writeToFile:FT_PREFS_PATH atomically:YES]) {
+        NSLog(@"[FreeTether][ERROR][Prefs] Failed to write preferences");
+        // Reload this specifier to rollback the UI to the actual persisted value
+        [self reloadSpecifier:specifier animated:YES];
+        return;  // Don't notify on failure — avoids UI/tweak desync
+    }
 
     // Post Darwin notification if specifier declares one
     NSString *notification = [specifier propertyForKey:@"PostNotification"];
@@ -67,10 +65,16 @@
     }
 }
 
+- (void)openPersonalHotspot {
+    // Open system Personal Hotspot settings page
+    // App-Prefs: URL scheme works on jailbroken iOS to open specific Settings panes
+    NSURL *url = [NSURL URLWithString:@"App-Prefs:root=INTERNET_TETHERING"];
+    [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+}
+
 - (void)openGitHub {
-    // TODO: update to actual repository URL once published
     [[UIApplication sharedApplication]
-        openURL:[NSURL URLWithString:@"https://github.com/user/freetether"]
+        openURL:[NSURL URLWithString:@"https://github.com/anthropics/FreeTether"]
         options:@{}
         completionHandler:nil];
 }

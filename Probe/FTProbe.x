@@ -173,10 +173,8 @@ static void dumpCSymbols() {
             }
         }
 
-        // W: don't dlclose handles obtained via RTLD_NOLOAD — it decrements the
-        // refcount on an already-loaded library and could theoretically unload it.
-        // dlopen(RTLD_NOLOAD) does NOT increment the refcount in a way that pairs
-        // with dlclose, so closing is both unnecessary and risky.
+        // Pair with the dlopen above — RTLD_NOLOAD still ref-counts the handle.
+        dlclose(handle);
     }
 
     [output appendFormat:@"\nTotal symbol matches: %d\n", totalMatches];

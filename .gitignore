@@ -4,3 +4,4 @@ packages/
 /.codefuse/
 /.theos/
 /docs/
+.DS_Store

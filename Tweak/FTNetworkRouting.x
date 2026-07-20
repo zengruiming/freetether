@@ -10,8 +10,8 @@
 #import <dlfcn.h>
 #import <sys/sysctl.h>
 #import <net/if.h>
+#import <netinet/in.h>
 #import <ifaddrs.h>
-#import <arpa/inet.h>
 #import <sys/wait.h>
 #import <spawn.h>
 #import <stdatomic.h>
@@ -19,7 +19,7 @@
 #import <signal.h>
 
 extern BOOL FTIsEnabled();
-extern BOOL gDebugLog;
+extern _Atomic BOOL gDebugLog;
 
 // Forward declaration — internal implementation (called only on sRouteQueue)
 static void FTApplyRouteOverrideImpl(void);
@@ -40,10 +40,8 @@ static _Atomic int32_t sDebounceToken = 0;
 // F1 fix: saved original IP forwarding values for restore
 static int sOriginalIPv4Forwarding = -1;
 static int sOriginalIPv6Forwarding = -1;
-// M1 fix: track whether we enabled pf
-static BOOL sPFEnabledByUs = NO;
-// Track whether anchor references have been injected into main ruleset
-static BOOL sAnchorInstalled = NO;
+// W3 fix: ensure cleanup runs at most once (SIGTERM handler vs atexit race)
+static _Atomic BOOL sCleanedUp = NO;
 // SIGTERM dispatch source for cleanup (launchd sends SIGTERM, not exit())
 static dispatch_source_t sSignalSource = NULL;
 
@@ -279,14 +277,18 @@ static BOOL applyNATRouteOverride(NSString *fromInterface, NSString *toInterface
     if (result == 0) {
         // C1 fix: ensure anchor is referenced in main ruleset, otherwise rules
         // loaded into the anchor are never evaluated by pf.
-        // Only inject once — pfctl -mf merge accumulates duplicate lines on repeat calls.
-        if (!sAnchorInstalled) {
-            execRouteCommand(@[@"/bin/sh", @"-c",
-                @"echo 'nat-anchor \"com.freetether\"' | /sbin/pfctl -mf -"]);
-            execRouteCommand(@[@"/bin/sh", @"-c",
-                @"echo 'anchor \"com.freetether\"' | /sbin/pfctl -mf -"]);
-            sAnchorInstalled = YES;
-            FT_DBG(@"Anchor references merged into main ruleset");
+        // R1 fix: always install anchor references — external pfctl operations
+        // (e.g. pfctl -F all, pfctl -f /etc/pf.conf) can remove our references
+        // from the main ruleset. pfctl -mf merge is idempotent for pf evaluation.
+        {
+            int anchorResult = execRouteCommand(@[@"/bin/sh", @"-c",
+                @"printf 'nat-anchor \"com.freetether\"\\nanchor \"com.freetether\"\\n' | /sbin/pfctl -mf -"]);
+            if (anchorResult == 0) {
+                FT_DBG(@"Anchor references merged into main ruleset");
+            } else {
+                FT_ROUTE_LOG(@"Failed to install anchor references (pfctl -mf returned %d) — "
+                             "NAT rules loaded but may not be evaluated", anchorResult);
+            }
         }
 
         // W6 fix: check if pf is already enabled before enabling it
@@ -327,11 +329,14 @@ static BOOL applyNATRouteOverride(NSString *fromInterface, NSString *toInterface
             }
         }
 
-        // M1 fix: enable pf and track that we did it
-        execRouteCommand(@[@"/sbin/pfctl", @"-e"]);
+        // M1 fix: only enable pf if it was not already running
         if (!pfWasEnabled) {
-            sPFEnabledByUs = YES;
-            FT_DBG(@"pf was not running — we enabled it, will disable on cleanup");
+            int pfEnableResult = execRouteCommand(@[@"/sbin/pfctl", @"-e"]);
+            if (pfEnableResult == 0) {
+                FT_DBG(@"pf was not running — we enabled it");
+            } else {
+                FT_ROUTE_LOG(@"Failed to enable pf (pfctl -e returned %d)", pfEnableResult);
+            }
         } else {
             FT_DBG(@"pf was already running — will not disable on cleanup");
         }
@@ -343,6 +348,9 @@ static BOOL applyNATRouteOverride(NSString *fromInterface, NSString *toInterface
         FT_ROUTE_LOG(@"Failed to apply NAT route (pfctl returned %d) — "
                      "this may be a sandbox/permission issue on rootless jailbreaks. "
                      "Try running 'pfctl' manually as root to verify.", result);
+        // Restore IP forwarding since NAT rules failed to load — forwarding
+        // without NAT would send packets with private source IPs upstream.
+        restoreIPForwarding();
         CFNotificationCenterPostNotification(
             CFNotificationCenterGetDarwinNotifyCenter(),
             CFSTR("com.freetether.routeError"), NULL, NULL, YES);
@@ -353,17 +361,14 @@ static BOOL applyNATRouteOverride(NSString *fromInterface, NSString *toInterface
 static void removeNATRouteOverride() {
     FT_ROUTE_LOG(@"Removing FreeTether NAT rules");
     execRouteCommand(@[@"/sbin/pfctl", @"-a", @"com.freetether", @"-F", @"all"]);
-    // C1 fix: remove anchor references from main ruleset.
-    // We reload the main ruleset without our anchors by flushing and re-loading.
-    // Note: pfctl -mf with empty anchor lines is a no-op, so this is safe even if
-    // other anchors exist — we only flush our own anchor above.
-    sAnchorInstalled = NO;
-    FT_DBG(@"Anchor com.freetether flushed");
-    // M1 fix: disable pf if we were the ones who enabled it
-    if (sPFEnabledByUs) {
-        execRouteCommand(@[@"/sbin/pfctl", @"-d"]);
-        sPFEnabledByUs = NO;
-    }
+    // W1 fix: do NOT flush anchor references from the main ruleset here.
+    // The anchor references (nat-anchor/anchor lines) stay in the main ruleset —
+    // they're harmless when the anchor is empty.
+    FT_DBG(@"Anchor com.freetether rules flushed (references kept in main ruleset)");
+    // Don't disable pf here even if we enabled it — CommCenter and MIS share the
+    // pfctl anchor, so disabling pf when one daemon exits would kill NAT for the
+    // other daemon that may still be actively tethering. An empty anchor with pf
+    // running is harmless.
     // F1 fix: restore IP forwarding to original values instead of forcing to 0
     restoreIPForwarding();
     // S3 fix: clean up temp file at corrected path
@@ -382,8 +387,10 @@ static void removeNATRouteOverride() {
     if (!FTIsEnabled()) return result;
 
     @try {
-        // Monitor routing table changes
-        if (name && namelen >= 2 && name[0] == 4 /* CTL_NET */ && name[1] == 17 /* PF_ROUTE */) {
+        // Monitor routing table changes — only trigger on write operations
+        // (newp != NULL indicates a write; reads have newp == NULL)
+        if (name && namelen >= 2 && name[0] == 4 /* CTL_NET */ && name[1] == 17 /* PF_ROUTE */
+            && newp != NULL && newlen > 0) {
             FT_DBG(@"sysctl routing call detected, namelen=%u", namelen);
 
             // When a route change is detected, apply our override if needed
@@ -442,29 +449,19 @@ static void FTApplyRouteOverrideImpl() {
     }
 }
 
-// Public API: thread-safe wrapper that dispatches to sRouteQueue.
-// External callers (sysctl hook, SCDynamicStore callback, FTLoadRoutingPrefs)
-// should always go through this or dispatch to sRouteQueue themselves.
-void FTApplyRouteOverride() {
-    if (!sRouteQueue) return;
-    dispatch_async(sRouteQueue, ^{
-        FTApplyRouteOverrideImpl();
-    });
-}
-
 void FTLoadRoutingPrefs(NSDictionary *prefs) {
-    BOOL oldVPN = gVPNSharing;
-    BOOL oldWiFi = gWiFiSharing;
+    BOOL oldVPN = atomic_load(&gVPNSharing);
+    BOOL oldWiFi = atomic_load(&gWiFiSharing);
 
-    gVPNSharing  = [prefs[@"vpnSharing"] boolValue];
-    gWiFiSharing = [prefs[@"wifiSharing"] boolValue];
-    FT_DBG(@"Routing prefs: vpn=%d wifi=%d", gVPNSharing, gWiFiSharing);
+    atomic_store(&gVPNSharing, [prefs[@"vpnSharing"] boolValue]);
+    atomic_store(&gWiFiSharing, [prefs[@"wifiSharing"] boolValue]);
+    FT_DBG(@"Routing prefs: vpn=%d wifi=%d", (BOOL)gVPNSharing, (BOOL)gWiFiSharing);
 
     // #1 fix: guard against nil sRouteQueue — only initialized in CommCenter/MIS
     if (!sRouteQueue) return;
 
     // Re-apply or remove route override if settings changed
-    if (oldVPN != gVPNSharing || oldWiFi != gWiFiSharing) {
+    if (oldVPN != atomic_load(&gVPNSharing) || oldWiFi != atomic_load(&gWiFiSharing)) {
         dispatch_async(sRouteQueue, ^{
             FTApplyRouteOverrideImpl();
         });
@@ -526,13 +523,21 @@ static void FTSetupNetworkMonitor() {
     }
 
     // Monitor global IPv4/IPv6 state changes (covers VPN up/down, Wi-Fi reconnect etc.)
+    // Also watch interface list changes — covers hotspot bridge (bridge100) creation/teardown.
     CFArrayRef keys = CFArrayCreate(kCFAllocatorDefault, (const void *[]){
         CFSTR("State:/Network/Global/IPv4"),
         CFSTR("State:/Network/Global/IPv6"),
-    }, 2, &kCFTypeArrayCallBacks);
+        CFSTR("State:/Network/Interface"),
+    }, 3, &kCFTypeArrayCallBacks);
 
-    dynStoreSetKeys(sDynStore, keys, NULL);
+    // Watch per-interface state changes via pattern — catches bridge100 and utun* appearing
+    CFArrayRef patterns = CFArrayCreate(kCFAllocatorDefault, (const void *[]){
+        CFSTR("State:/Network/Interface/.*/IPv4"),
+    }, 1, &kCFTypeArrayCallBacks);
+
+    dynStoreSetKeys(sDynStore, keys, patterns);
     CFRelease(keys);
+    CFRelease(patterns);
 
     CFRunLoopSourceRef rls = dynStoreCreateRLS(kCFAllocatorDefault, sDynStore, 0);
     if (rls) {
@@ -542,26 +547,73 @@ static void FTSetupNetworkMonitor() {
     }
 }
 
-// S7 fix: cleanup on process exit
-static void FTRouteCleanup() {
-    removeNATRouteOverride();
-    if (sDynStore) {
-        CFRelease(sDynStore);
-        sDynStore = NULL;
+// S7 fix: cleanup on process exit — dispatch to sRouteQueue to avoid racing
+// with concurrent route operations. Use dispatch_sync so atexit blocks until
+// cleanup completes (atexit callbacks must finish before process teardown).
+// The `alreadyOnQueue` parameter avoids deadlock when called from the SIGTERM
+// dispatch source handler (which already runs on sRouteQueue).
+static void FTRouteCleanupOnQueue(BOOL alreadyOnQueue) {
+    // W3 fix: guard against double cleanup (SIGTERM handler + atexit race)
+    if (atomic_exchange(&sCleanedUp, YES)) return;
+
+    if (sRouteQueue && !alreadyOnQueue) {
+        dispatch_sync(sRouteQueue, ^{
+            removeNATRouteOverride();
+        });
+    } else {
+        removeNATRouteOverride();
     }
+    // Cancel the SIGTERM dispatch source to release its resources.
+    // dispatch_source_cancel is safe from any thread.
+    if (sSignalSource) {
+        dispatch_source_cancel(sSignalSource);
+        sSignalSource = NULL;
+    }
+    // Don't CFRelease sDynStore here — its RunLoopSource is on the main RunLoop
+    // and releasing from a non-main thread is undefined. The process is about to
+    // exit anyway, so the OS reclaims all resources.
     FT_DBG(@"Route cleanup completed");
+}
+
+// atexit wrapper — called from arbitrary thread, needs dispatch_sync
+static void FTRouteCleanup() {
+    FTRouteCleanupOnQueue(NO);
 }
 
 %ctor {
     NSString *proc = [[NSProcessInfo processInfo] processName];
     if ([proc isEqualToString:@"MobileInternetSharing"] ||
         [proc isEqualToString:@"CommCenter"]) {
-        // Clean up any NAT rules/IP-forwarding state that may have been left
-        // behind by a previous instance killed with SIGKILL (e.g. killall -9).
-        removeNATRouteOverride();
-
         NSLog(@"[FreeTether][Route] Activating routing hooks in %@", proc);
         sRouteQueue = dispatch_queue_create("com.freetether.route", DISPATCH_QUEUE_SERIAL);
+
+        // Clean up any NAT rules/IP-forwarding state left behind by a previous
+        // instance killed with SIGKILL — but only if no hotspot is actively using
+        // our shared anchor. Both CommCenter and MIS load this tweak and share the
+        // pfctl anchor "com.freetether"; blindly flushing on startup would break
+        // the other daemon's active NAT if it's still tethering.
+        dispatch_async(sRouteQueue, ^{
+            // Read prefs directly since FTReloadPrefs may not have run yet
+            // (it's dispatched async on the main queue in Tweak.x)
+            NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:
+                @"/var/mobile/Library/Preferences/com.freetether.plist"] ?: @{};
+            BOOL vpn = [dict[@"vpnSharing"] boolValue];
+            BOOL wifi = [dict[@"wifiSharing"] boolValue];
+            // Seed atomic variables before calling FTApplyRouteOverrideImpl() —
+            // FTReloadPrefs (main queue) almost certainly hasn't run yet, so
+            // gVPNSharing/gWiFiSharing would still be NO, causing the impl to
+            // take the else branch and incorrectly remove NAT rules.
+            atomic_store(&gVPNSharing, vpn);
+            atomic_store(&gWiFiSharing, wifi);
+            NSString *bridgeIf = findHotspotBridgeInterface();
+            if (bridgeIf && (vpn || wifi)) {
+                FT_DBG(@"Hotspot bridge %@ active on startup with sharing enabled, re-applying NAT", bridgeIf);
+                FTApplyRouteOverrideImpl();
+            } else {
+                removeNATRouteOverride();
+            }
+        });
+
         %init(InternetSharingHooks);
         // W7: register SCDynamicStore listener for network state changes
         FTSetupNetworkMonitor();
@@ -575,7 +627,8 @@ static void FTRouteCleanup() {
         sSignalSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, sRouteQueue);
         dispatch_source_set_event_handler(sSignalSource, ^{
             FT_ROUTE_LOG(@"SIGTERM received, cleaning up NAT rules");
-            FTRouteCleanup();
+            // Already on sRouteQueue — pass YES to avoid dispatch_sync deadlock
+            FTRouteCleanupOnQueue(YES);
             signal(SIGTERM, SIG_DFL);
             raise(SIGTERM);
         });

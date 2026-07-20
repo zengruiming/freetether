@@ -6,7 +6,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = FreeTether
 FreeTether_FILES = $(wildcard Tweak/*.x)
-FreeTether_FRAMEWORKS = CoreTelephony SystemConfiguration CoreFoundation Foundation
+FreeTether_FRAMEWORKS = SystemConfiguration CoreFoundation Foundation
 FreeTether_CFLAGS = -fobjc-arc -Wno-availability
 FreeTether_LIBRARIES = root
 
@@ -15,7 +15,6 @@ freetether-cli_FILES = Tools/freetether-cli.m
 freetether-cli_INSTALL_PATH = /usr/bin
 freetether-cli_CFLAGS = -fobjc-arc
 freetether-cli_FRAMEWORKS = CoreFoundation Foundation
-freetether-cli_LIBRARIES = root
 
 BUNDLE_NAME = FreeTetherPrefs
 FreeTetherPrefs_FILES = $(wildcard Preferences/*.m)
@@ -27,7 +26,7 @@ FreeTetherPrefs_RESOURCE_DIRS = Preferences/Resources
 
 BUNDLE_NAME += FreeTetherCC
 FreeTetherCC_FILES = $(wildcard CCModule/*.m)
-FreeTetherCC_FRAMEWORKS = UIKit
+FreeTetherCC_FRAMEWORKS = UIKit Foundation
 FreeTetherCC_PRIVATE_FRAMEWORKS = ControlCenterUIKit
 FreeTetherCC_INSTALL_PATH = /Library/ControlCenter/Bundles
 FreeTetherCC_CFLAGS = -fobjc-arc

@@ -2,6 +2,7 @@
 // FreeTether main entry — preferences caching and process detection
 
 #import <Foundation/Foundation.h>
+#import <stdatomic.h>
 
 // libroot.h provides ROOT_PATH() / JBROOT_PATH_CSTRING() macros for rootless path resolution.
 // When building with Theos rootless, libroot is linked via FreeTether_LIBRARIES = root.
@@ -14,56 +15,47 @@
 #endif
 
 #define FT_LOG(fmt, ...) NSLog(@"[FreeTether] " fmt, ##__VA_ARGS__)
-#define FT_ERR(fmt, ...) NSLog(@"[FreeTether][ERROR] " fmt, ##__VA_ARGS__)
 #define FT_DBG(fmt, ...) do { if (gDebugLog) NSLog(@"[FreeTether][DBG] " fmt, ##__VA_ARGS__); } while(0)
 
-#define FT_PREFS_DOMAIN  CFSTR("com.freetether")
 #define FT_NOTIFY_KEY    CFSTR("com.freetether.prefschanged")
 
+// Read preferences directly from mobile user's plist file instead of
+// CFPreferences domain. System daemons (CommCenter, MobileInternetSharing)
+// run as root (UID 0), so CFPreferencesCopyAppValue reads from root's
+// domain and never sees values written by Settings.app (mobile, UID 501).
+#define FT_PREFS_PATH @"/var/mobile/Library/Preferences/com.freetether.plist"
+
 // --- Global prefs cache ---
-BOOL gEnabled        = YES;
-BOOL gDebugLog       = NO;
-BOOL gForceHotspot   = YES;
-BOOL gBypassEntitlement = YES;
-BOOL gMaskTraffic    = YES;
-NSString *gCustomAPN = nil;
+// Use C11 atomics: these are written on the main queue (FTReloadPrefs) but read
+// from sysctl-hook threads and sRouteQueue in FTNetworkRouting.x.
+_Atomic BOOL gEnabled        = YES;
+_Atomic BOOL gDebugLog       = NO;
 
 // FTNetworkRouting.x provides routing prefs loader
 extern void FTLoadRoutingPrefs(NSDictionary *prefs);
 
-// #3 fix: helper to read a single pref from CFPreferences domain (consistent with PSListController)
-static id FTReadPref(CFStringRef key) {
-    return (__bridge_transfer id)CFPreferencesCopyAppValue(key, FT_PREFS_DOMAIN);
+// Read prefs from mobile user's plist file on disk. This works regardless
+// of the calling process's UID, unlike CFPreferences which is per-user.
+static NSDictionary *FTReadPrefsDict() {
+    return [NSDictionary dictionaryWithContentsOfFile:FT_PREFS_PATH] ?: @{};
 }
 
 void FTReloadPrefs() {
-    // #3 fix: synchronize first to ensure pending CFPreferences writes are flushed
-    CFPreferencesAppSynchronize(FT_PREFS_DOMAIN);
+    NSDictionary *dict = FTReadPrefsDict();
 
     id val;
-    val = FTReadPref(CFSTR("enabled"));
-    gEnabled           = (val == nil) || [val boolValue];
-    gDebugLog          = [FTReadPref(CFSTR("debugLog")) boolValue];
-    val = FTReadPref(CFSTR("forceHotspot"));
-    gForceHotspot      = (val == nil) || [val boolValue];
-    val = FTReadPref(CFSTR("bypassEntitlement"));
-    gBypassEntitlement = (val == nil) || [val boolValue];
-    val = FTReadPref(CFSTR("maskTraffic"));
-    gMaskTraffic       = (val == nil) || [val boolValue];
-
-    NSString *apn = FTReadPref(CFSTR("customAPN"));
-    gCustomAPN = (apn.length > 0) ? [apn copy] : nil;
+    val = dict[@"enabled"];
+    gEnabled  = (val == nil) || [val boolValue];
+    gDebugLog = [dict[@"debugLog"] boolValue];
 
     // Build a dictionary for FTLoadRoutingPrefs
     NSDictionary *prefs = @{
-        @"vpnSharing":  FTReadPref(CFSTR("vpnSharing"))  ?: @NO,
-        @"wifiSharing": FTReadPref(CFSTR("wifiSharing")) ?: @NO,
+        @"vpnSharing":  dict[@"vpnSharing"]  ?: @NO,
+        @"wifiSharing": dict[@"wifiSharing"] ?: @NO,
     };
     FTLoadRoutingPrefs(prefs);
 
-    FT_LOG(@"Prefs reloaded: enabled=%d forceHotspot=%d bypass=%d mask=%d debug=%d apn=%@",
-           gEnabled, gForceHotspot, gBypassEntitlement, gMaskTraffic, gDebugLog,
-           gCustomAPN ?: @"(default)");
+    FT_LOG(@"Prefs reloaded: enabled=%d debug=%d", gEnabled, gDebugLog);
 }
 
 BOOL FTIsEnabled() {
@@ -83,11 +75,20 @@ static void prefsChangedCallback(CFNotificationCenterRef center, void *observer,
 
 %ctor {
     FT_LOG(@"Loaded in process: %@", currentProcessName());
-    FTReloadPrefs();
 
+    // Register for prefs-changed notifications BEFORE initial load,
+    // so we don't miss a notification that fires between load and register.
     CFNotificationCenterAddObserver(
         CFNotificationCenterGetDarwinNotifyCenter(), NULL,
         prefsChangedCallback,
         FT_NOTIFY_KEY, NULL,
         CFNotificationSuspensionBehaviorCoalesce);
+
+    // Delay initial prefs load slightly — in CommCenter/MIS, FTNetworkRouting.x's
+    // %ctor initializes sRouteQueue. Logos %ctor order across files is undefined,
+    // so we dispatch async to ensure all %ctors have run before we load prefs
+    // and trigger FTApplyRouteOverrideImpl.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        FTReloadPrefs();
+    });
 }

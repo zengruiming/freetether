@@ -6,83 +6,31 @@
     <key>items</key>
     <array>
 
-        <!-- Header -->
+        <!-- Master Switch -->
         <dict>
             <key>cell</key><string>PSGroupCell</string>
-            <key>label</key><string>HOTSPOT_SETTINGS</string>
+            <key>label</key><string>MASTER_CONTROL</string>
         </dict>
 
-        <!-- Master enable switch -->
         <dict>
             <key>cell</key><string>PSSwitchCell</string>
             <key>default</key><true/>
-            <key>defaults</key><string>com.freetether</string>
             <key>key</key><string>enabled</string>
             <key>label</key><string>ENABLED</string>
             <key>PostNotification</key><string>com.freetether.prefschanged</string>
         </dict>
 
-        <!-- W11 fix: footerText merged into group header; W10 fix: use localization key -->
-        <!-- Force hotspot -->
+        <!-- Personal Hotspot shortcut -->
         <dict>
             <key>cell</key><string>PSGroupCell</string>
-            <key>footerText</key><string>FORCE_HOTSPOT_FOOTER</string>
+            <key>label</key><string>PERSONAL_HOTSPOT</string>
+            <key>footerText</key><string>PERSONAL_HOTSPOT_FOOTER</string>
         </dict>
 
         <dict>
-            <key>cell</key><string>PSSwitchCell</string>
-            <key>default</key><true/>
-            <key>defaults</key><string>com.freetether</string>
-            <key>key</key><string>forceHotspot</string>
-            <key>label</key><string>FORCE_HOTSPOT</string>
-            <key>PostNotification</key><string>com.freetether.prefschanged</string>
-        </dict>
-
-        <!-- Bypass entitlement -->
-        <dict>
-            <key>cell</key><string>PSGroupCell</string>
-            <key>footerText</key><string>BYPASS_ENTITLEMENT_FOOTER</string>
-        </dict>
-
-        <dict>
-            <key>cell</key><string>PSSwitchCell</string>
-            <key>default</key><true/>
-            <key>defaults</key><string>com.freetether</string>
-            <key>key</key><string>bypassEntitlement</string>
-            <key>label</key><string>BYPASS_ENTITLEMENT</string>
-            <key>PostNotification</key><string>com.freetether.prefschanged</string>
-        </dict>
-
-        <!-- Mask traffic -->
-        <dict>
-            <key>cell</key><string>PSGroupCell</string>
-            <key>footerText</key><string>MASK_TRAFFIC_FOOTER</string>
-        </dict>
-
-        <dict>
-            <key>cell</key><string>PSSwitchCell</string>
-            <key>default</key><true/>
-            <key>defaults</key><string>com.freetether</string>
-            <key>key</key><string>maskTraffic</string>
-            <key>label</key><string>MASK_TRAFFIC</string>
-            <key>PostNotification</key><string>com.freetether.prefschanged</string>
-        </dict>
-
-        <!-- APN Section -->
-        <dict>
-            <key>cell</key><string>PSGroupCell</string>
-            <key>label</key><string>APN_SETTINGS</string>
-        </dict>
-
-        <!-- S9 fix: keyboardType 3 = UIKeyboardTypeURL, suitable for APN input -->
-        <dict>
-            <key>cell</key><string>PSEditTextCell</string>
-            <key>defaults</key><string>com.freetether</string>
-            <key>key</key><string>customAPN</string>
-            <key>label</key><string>CUSTOM_APN</string>
-            <key>placeholder</key><string>APN_PLACEHOLDER</string>
-            <key>keyboardType</key><integer>3</integer>
-            <key>PostNotification</key><string>com.freetether.prefschanged</string>
+            <key>cell</key><string>PSButtonCell</string>
+            <key>label</key><string>OPEN_HOTSPOT_SETTINGS</string>
+            <key>action</key><string>openPersonalHotspot</string>
         </dict>
 
         <!-- VPN/Wi-Fi Sharing Section -->
@@ -95,7 +43,6 @@
         <dict>
             <key>cell</key><string>PSSwitchCell</string>
             <key>default</key><false/>
-            <key>defaults</key><string>com.freetether</string>
             <key>key</key><string>vpnSharing</string>
             <key>label</key><string>VPN_SHARING</string>
             <key>PostNotification</key><string>com.freetether.prefschanged</string>
@@ -104,7 +51,6 @@
         <dict>
             <key>cell</key><string>PSSwitchCell</string>
             <key>default</key><false/>
-            <key>defaults</key><string>com.freetether</string>
             <key>key</key><string>wifiSharing</string>
             <key>label</key><string>WIFI_SHARING</string>
             <key>PostNotification</key><string>com.freetether.prefschanged</string>
@@ -119,7 +65,6 @@
         <dict>
             <key>cell</key><string>PSSwitchCell</string>
             <key>default</key><false/>
-            <key>defaults</key><string>com.freetether</string>
             <key>key</key><string>debugLog</string>
             <key>label</key><string>DEBUG_LOG</string>
             <key>PostNotification</key><string>com.freetether.prefschanged</string>

@@ -4,8 +4,12 @@
 #import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <unistd.h>
+#import <sys/stat.h>
+#import <errno.h>
 
-#define FT_PREFS_DOMAIN  CFSTR("com.freetether")
+// All components share the same on-disk plist so root daemons can read
+// what mobile-user Settings.app writes.
+#define FT_PREFS_PATH @"/var/mobile/Library/Preferences/com.freetether.plist"
 #define NOTIFY_KEY "com.freetether.prefschanged"
 
 static void notifyPrefsChanged() {
@@ -14,19 +18,25 @@ static void notifyPrefsChanged() {
         CFSTR(NOTIFY_KEY), NULL, NULL, YES);
 }
 
-// Read a single preference value via CFPreferences (consistent with Tweak.x)
-static id readPref(CFStringRef key) {
-    return (__bridge_transfer id)CFPreferencesCopyAppValue(key, FT_PREFS_DOMAIN);
+// Read the entire prefs dictionary from the shared plist file
+static NSDictionary *readPrefsDict() {
+    return [NSDictionary dictionaryWithContentsOfFile:FT_PREFS_PATH] ?: @{};
 }
 
-// Write a single preference value via CFPreferences (consistent with Tweak.x)
-static BOOL writePref(CFStringRef key, id value) {
-    CFPreferencesSetAppValue(key, (__bridge CFPropertyListRef)value, FT_PREFS_DOMAIN);
-    BOOL ok = CFPreferencesAppSynchronize(FT_PREFS_DOMAIN);
+// Write a single preference key and notify
+static BOOL writePref(NSString *key, id value) {
+    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:FT_PREFS_PATH] ?: [NSMutableDictionary dictionary];
+    dict[key] = value;
+    BOOL ok = [dict writeToFile:FT_PREFS_PATH atomically:YES];
     if (ok) {
+        // Restore mobile ownership so Settings.app (UID 501) can still write
+        if (chown([FT_PREFS_PATH fileSystemRepresentation], 501, 501) != 0) {
+            fprintf(stderr, "Warning: Failed to restore ownership on %s: %s\n",
+                    [FT_PREFS_PATH UTF8String], strerror(errno));
+        }
         notifyPrefsChanged();
     } else {
-        fprintf(stderr, "Error: Failed to synchronize preferences\n");
+        fprintf(stderr, "Error: Failed to write preferences to %s\n", [FT_PREFS_PATH UTF8String]);
     }
     return ok;
 }
@@ -40,65 +50,42 @@ static void printUsage() {
         "  enable              Enable FreeTether\n"
         "  disable             Disable FreeTether (kill switch)\n"
         "  set <key> <on|off>  Toggle a sub-feature\n"
-        "  set customAPN <val> Set custom APN (use \"\" or clear to remove)\n"
         "  debug on|off        Enable/disable debug logging\n"
         "\n"
         "Sub-feature keys for 'set':\n"
-        "  forceHotspot        Force hotspot capability\n"
-        "  bypassEntitlement   Bypass carrier entitlement checks\n"
-        "  maskTraffic         Mask tethered traffic as phone traffic\n"
         "  vpnSharing          Share VPN connection over hotspot\n"
         "  wifiSharing         Share Wi-Fi connection over hotspot\n"
     );
 }
 
-// W8 fix: helper to read a bool pref with default-YES semantics
-static BOOL readBoolPrefDefaultYes(CFStringRef key) {
-    id val = readPref(key);
-    return (val == nil) || [val boolValue];
-}
-
 static void printStatus() {
-    // Synchronize first to pick up any pending writes
-    CFPreferencesAppSynchronize(FT_PREFS_DOMAIN);
+    NSDictionary *dict = readPrefsDict();
 
-    BOOL enabled    = readBoolPrefDefaultYes(CFSTR("enabled"));
-    BOOL debug      = [readPref(CFSTR("debugLog")) boolValue];
-    BOOL hotspot    = readBoolPrefDefaultYes(CFSTR("forceHotspot"));
-    BOOL bypass     = readBoolPrefDefaultYes(CFSTR("bypassEntitlement"));
-    BOOL mask       = readBoolPrefDefaultYes(CFSTR("maskTraffic"));
-    // W1 fix: also display vpnSharing and wifiSharing status
-    BOOL vpn        = [readPref(CFSTR("vpnSharing")) boolValue];
-    BOOL wifi       = [readPref(CFSTR("wifiSharing")) boolValue];
-    NSString *apn   = readPref(CFSTR("customAPN")) ?: @"(default)";
+    BOOL enabled    = (dict[@"enabled"] == nil) || [dict[@"enabled"] boolValue];
+    BOOL debug      = [dict[@"debugLog"] boolValue];
+    BOOL vpn        = [dict[@"vpnSharing"] boolValue];
+    BOOL wifi       = [dict[@"wifiSharing"] boolValue];
 
     printf("FreeTether Status:\n");
     printf("  Enabled:              %s\n", enabled ? "YES" : "NO");
-    printf("  Force Hotspot:        %s\n", hotspot ? "YES" : "NO");
-    printf("  Bypass Entitlement:   %s\n", bypass  ? "YES" : "NO");
-    printf("  Mask Traffic:         %s\n", mask    ? "YES" : "NO");
     printf("  VPN Sharing:          %s\n", vpn     ? "YES" : "NO");
     printf("  Wi-Fi Sharing:        %s\n", wifi    ? "YES" : "NO");
-    printf("  Custom APN:           %s\n", [apn UTF8String]);
     printf("  Debug Log:            %s\n", debug   ? "YES" : "NO");
-    // S3 fix: use the macro constant instead of a hardcoded string
-    printf("\n  Prefs domain: %s\n",
-           "com.freetether");
+    printf("\n  Prefs file: %s\n",
+           [FT_PREFS_PATH UTF8String]);
 }
 
 static BOOL setKey(NSString *key, id value) {
-    if (!writePref((__bridge CFStringRef)key, value)) {
-        fprintf(stderr, "Error: Failed to write preference '%s'\n", [key UTF8String]);
+    if (!writePref(key, value)) {
         return NO;
     }
     printf("Set %s = %s\n", [key UTF8String], [[value description] UTF8String]);
     return YES;
 }
 
-// W2 fix: valid sub-feature keys that can be toggled via 'set' command
+// Valid sub-feature keys that can be toggled via 'set' command
 static NSSet *validSubFeatureKeys() {
     return [NSSet setWithObjects:
-        @"forceHotspot", @"bypassEntitlement", @"maskTraffic",
         @"vpnSharing", @"wifiSharing", nil];
 }
 
@@ -109,10 +96,14 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        // W3 fix: check root privileges — CFPreferences writes to the global domain
-        // require root on jailbroken iOS to be visible to other processes.
+        // Check write permissions — the plist is owned by mobile (UID 501).
+        // Running as root ensures file ownership is preserved correctly and
+        // avoids potential permission issues in restricted environments.
         NSString *cmd = [NSString stringWithUTF8String:argv[1]];
-        BOOL isWriteCommand = ![cmd isEqualToString:@"status"];
+        BOOL isWriteCommand = [cmd isEqualToString:@"enable"] ||
+                              [cmd isEqualToString:@"disable"] ||
+                              [cmd isEqualToString:@"set"] ||
+                              [cmd isEqualToString:@"debug"];
         if (isWriteCommand && getuid() != 0) {
             fprintf(stderr, "Warning: Not running as root. Preference changes may not "
                     "take effect for system daemons. Try: sudo freetether-cli %s\n",
@@ -125,32 +116,27 @@ int main(int argc, char *argv[]) {
             if (!setKey(@"enabled", @YES)) return 1;
         } else if ([cmd isEqualToString:@"disable"]) {
             if (!setKey(@"enabled", @NO)) return 1;
-        } else if ([cmd isEqualToString:@"set"] && argc >= 4) {
-            // W2 fix: sub-feature toggle command
+        } else if ([cmd isEqualToString:@"set"]) {
+            if (argc < 4) {
+                fprintf(stderr, "Error: 'set' requires <key> <on|off>\n");
+                fprintf(stderr, "Example: freetether-cli set vpnSharing on\n");
+                return 1;
+            }
             NSString *key = [NSString stringWithUTF8String:argv[2]];
             NSString *val = [NSString stringWithUTF8String:argv[3]];
 
-            // W14 fix: customAPN accepts a string value, not on/off
-            if ([key isEqualToString:@"customAPN"]) {
-                if ([val isEqualToString:@"clear"] || [val length] == 0) {
-                    // Remove the key to revert to default APN
-                    CFPreferencesSetAppValue(CFSTR("customAPN"), NULL, FT_PREFS_DOMAIN);
-                    BOOL ok = CFPreferencesAppSynchronize(FT_PREFS_DOMAIN);
-                    if (!ok) {
-                        fprintf(stderr, "Error: Failed to synchronize preferences\n");
-                        return 1;
-                    }
-                    notifyPrefsChanged();
-                    printf("Cleared customAPN (using default)\n");
-                } else {
-                    if (!setKey(@"customAPN", val)) return 1;
-                }
-            } else if (![validSubFeatureKeys() containsObject:key]) {
-                fprintf(stderr, "Error: Unknown sub-feature key '%s'\n", [key UTF8String]);
-                fprintf(stderr, "Valid keys: forceHotspot, bypassEntitlement, maskTraffic, "
-                        "vpnSharing, wifiSharing, customAPN\n");
+            if (!key || !val) {
+                fprintf(stderr, "Error: Invalid argument encoding\n");
                 return 1;
-            } else if ([val isEqualToString:@"on"]) {
+            }
+
+            if (![validSubFeatureKeys() containsObject:key]) {
+                fprintf(stderr, "Error: Unknown sub-feature key '%s'\n", [key UTF8String]);
+                fprintf(stderr, "Valid keys: vpnSharing, wifiSharing\n");
+                return 1;
+            }
+
+            if ([val isEqualToString:@"on"]) {
                 if (!setKey(key, @YES)) return 1;
             } else if ([val isEqualToString:@"off"]) {
                 if (!setKey(key, @NO)) return 1;
@@ -158,9 +144,17 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Error: 'set' expects 'on' or 'off', got '%s'\n", [val UTF8String]);
                 return 1;
             }
-        } else if ([cmd isEqualToString:@"debug"] && argc >= 3) {
+        } else if ([cmd isEqualToString:@"debug"]) {
+            if (argc < 3) {
+                fprintf(stderr, "Error: 'debug' requires on|off\n");
+                fprintf(stderr, "Example: freetether-cli debug on\n");
+                return 1;
+            }
             NSString *val = [NSString stringWithUTF8String:argv[2]];
-            // #12 fix: validate argument strictly — only accept 'on' or 'off'
+            if (!val) {
+                fprintf(stderr, "Error: Invalid argument encoding\n");
+                return 1;
+            }
             if ([val isEqualToString:@"on"]) {
                 if (!setKey(@"debugLog", @YES)) return 1;
             } else if ([val isEqualToString:@"off"]) {

@@ -4,9 +4,9 @@ Version: 0.1.0
 Architecture: iphoneos-arm64
 Depends: mobilesubstrate (>= 0.9.5000) | ellekit (>= 1.0), firmware (>= 15.0), preferenceloader
 Recommends: ccsupport
-Description: Open-source personal hotspot unlocker for palera1n rootless. Bypass carrier tethering restrictions.
+Description: Open-source hotspot sharing tool for palera1n rootless. Share VPN or Wi-Fi connections through Personal Hotspot.
 Maintainer: FreeTether Contributors
 Author: FreeTether Contributors
 Section: Networking
-Homepage: https://github.com/user/FreeTether
+Homepage: https://github.com/anthropics/FreeTether
 License: GPL-3.0
