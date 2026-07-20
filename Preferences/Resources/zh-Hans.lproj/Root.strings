@@ -19,4 +19,4 @@
 "WIFI_NOT_CONNECTED" = "Wi-Fi 未连接";
 "WIFI_NOT_CONNECTED_MSG" = "请先连接 Wi-Fi，再开启共享 Wi-Fi 功能。";
 "HOTSPOT_OPEN_FAILED_TITLE" = "无法打开";
-"HOTSPOT_OPEN_FAILED_MSG" = "无法打开个人热点设置页面。请手动前往"设置 > 个人热点"。";
+"HOTSPOT_OPEN_FAILED_MSG" = "无法打开个人热点设置页面。请手动前往 设置 > 个人热点。";
