@@ -12,6 +12,7 @@
 #import <net/if.h>
 #import <netinet/in.h>
 #import <ifaddrs.h>
+#import <arpa/inet.h>
 #import <sys/wait.h>
 #import <spawn.h>
 #import <stdatomic.h>
@@ -232,6 +233,64 @@ static int execRouteCommand(NSArray *args) {
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
+// iOS 15 pfctl does not support "interface:network" syntax to resolve an
+// interface's subnet. We must compute the CIDR notation explicitly from
+// getifaddrs(). Returns e.g. @"172.20.10.0/28" or nil on failure.
+static NSString *getInterfaceCIDR(NSString *ifName) {
+    struct ifaddrs *interfaces = NULL;
+    if (getifaddrs(&interfaces) != 0) return nil;
+
+    NSString *cidr = nil;
+    for (struct ifaddrs *ifp = interfaces; ifp != NULL; ifp = ifp->ifa_next) {
+        if (ifp->ifa_addr == NULL || ifp->ifa_addr->sa_family != AF_INET) continue;
+        NSString *name = [NSString stringWithUTF8String:ifp->ifa_name];
+        if (![name isEqualToString:ifName]) continue;
+        if (ifp->ifa_netmask == NULL) continue;
+
+        struct sockaddr_in *addr = (struct sockaddr_in *)ifp->ifa_addr;
+        struct sockaddr_in *mask = (struct sockaddr_in *)ifp->ifa_netmask;
+
+        // Compute network address = addr & mask
+        uint32_t netAddr = addr->sin_addr.s_addr & mask->sin_addr.s_addr;
+        // Count prefix length from mask
+        uint32_t m = ntohl(mask->sin_addr.s_addr);
+        int prefixLen = 0;
+        while (m & 0x80000000) { prefixLen++; m <<= 1; }
+
+        struct in_addr net;
+        net.s_addr = netAddr;
+        char buf[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &net, buf, sizeof(buf));
+
+        cidr = [NSString stringWithFormat:@"%s/%d", buf, prefixLen];
+        FT_DBG(@"Computed CIDR for %@: %@", ifName, cidr);
+        break;
+    }
+    freeifaddrs(interfaces);
+    return cidr;
+}
+
+// Get the IPv4 address of an interface (for route-to gateway). Returns e.g. @"10.0.94.68".
+static NSString *getInterfaceIPv4(NSString *ifName) {
+    struct ifaddrs *interfaces = NULL;
+    if (getifaddrs(&interfaces) != 0) return nil;
+
+    NSString *ip = nil;
+    for (struct ifaddrs *ifp = interfaces; ifp != NULL; ifp = ifp->ifa_next) {
+        if (ifp->ifa_addr == NULL || ifp->ifa_addr->sa_family != AF_INET) continue;
+        NSString *name = [NSString stringWithUTF8String:ifp->ifa_name];
+        if (![name isEqualToString:ifName]) continue;
+
+        char buf[INET_ADDRSTRLEN];
+        struct sockaddr_in *sin = (struct sockaddr_in *)ifp->ifa_addr;
+        inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf));
+        ip = [NSString stringWithUTF8String:buf];
+        break;
+    }
+    freeifaddrs(interfaces);
+    return ip;
+}
+
 static BOOL applyNATRouteOverride(NSString *fromInterface, NSString *toInterface) {
     if (!fromInterface || !toInterface) return NO;
 
@@ -240,12 +299,23 @@ static BOOL applyNATRouteOverride(NSString *fromInterface, NSString *toInterface
     // Enable IP forwarding (required for NAT)
     if (!enableIPForwarding()) return NO;
 
+    // iOS 15 pfctl does not support "interface:network" syntax, so we compute
+    // the source network CIDR and destination gateway IP explicitly.
+    NSString *fromCIDR = getInterfaceCIDR(fromInterface);
+    if (!fromCIDR) {
+        FT_ROUTE_LOG(@"Failed to compute CIDR for %@ — cannot apply NAT rules", fromInterface);
+        restoreIPForwarding();
+        return NO;
+    }
+    NSString *toGatewayIP = getInterfaceIPv4(toInterface);
+
     // Add NAT rule using pfctl
     // Create a temporary pf anchor for FreeTether
     // Explicitly specify 'inet' (IPv4) to be unambiguous about protocol family.
+    // Use explicit CIDR instead of "interface:network" for iOS 15 compatibility.
     NSString *natRule = [NSString stringWithFormat:
-        @"nat on %@ inet from %@:network to any -> (%@)",
-        toInterface, fromInterface, toInterface];
+        @"nat on %@ inet from %@ to any -> (%@)",
+        toInterface, fromCIDR, toInterface];
 
     // WiFi sharing (and any non-VPN scenario where the default route may not
     // point to toInterface) needs a route-to rule. pf's "nat on <if>" only
@@ -253,9 +323,18 @@ static BOOL applyNATRouteOverride(NSString *fromInterface, NSString *toInterface
     // bridge traffic follows the default route (often pdp_ip0 / cellular) and
     // bypasses our NAT entirely. VPN sharing doesn't need this because the VPN
     // client already sets utun as the default route.
-    NSString *routeRule = [NSString stringWithFormat:
-        @"pass in on %@ inet route-to (%@) from %@:network to any",
-        fromInterface, toInterface, fromInterface];
+    // iOS 15 pfctl requires "route-to (interface gateway)" with an explicit gateway IP.
+    NSString *routeRule;
+    if (toGatewayIP) {
+        routeRule = [NSString stringWithFormat:
+            @"pass in on %@ route-to (%@ %@) inet from %@ to any",
+            fromInterface, toInterface, toGatewayIP, fromCIDR];
+    } else {
+        // Fallback: no gateway IP available (e.g. point-to-point without address)
+        routeRule = [NSString stringWithFormat:
+            @"pass in on %@ route-to %@ inet from %@ to any",
+            fromInterface, toInterface, fromCIDR];
+    }
 
     // S3 fix: write to /var/tmp/ which is always writable by root
     // M3: TODO — IPv6 NAT (inet6) requires separate pf rules and is more complex;
