@@ -132,33 +132,45 @@ static int hook_CTServerConnectionGetTetheredModeEnabled(void *conn, BOOL *outEn
 // Resolve symbols via dlsym and install hooks with MSHookFunction.
 // If a symbol doesn't exist on this iOS version, the hook is silently skipped.
 static void FTInstallTetherBypassHooks() {
-    void *ct = dlopen("/System/Library/Frameworks/CoreTelephony.framework/CoreTelephony", RTLD_LAZY | RTLD_NOLOAD);
-    if (!ct) {
-        // Try loading it explicitly
-        ct = dlopen("/System/Library/Frameworks/CoreTelephony.framework/CoreTelephony", RTLD_LAZY);
-    }
-    if (!ct) {
-        FT_LOG(@"Failed to dlopen CoreTelephony — tether bypass hooks not installed");
-        return;
-    }
+    // Try multiple images — iOS 18 moved symbols out of CoreTelephony
+    const char *images[] = {
+        "/System/Library/Frameworks/CoreTelephony.framework/CoreTelephony",
+        "/usr/libexec/CommCenter",      // iOS 18: symbols may live in the binary itself
+        "/System/Library/Frameworks/CoreTelephony.framework/Support/CommCenter",
+        NULL,
+    };
 
     int hooked = 0;
+    void *sym1 = NULL, *sym2 = NULL, *sym3 = NULL;
 
-    void *sym1 = dlsym(ct, "CTCarrierSpaceGetSetting");
+    for (int i = 0; images[i] && hooked < 3; i++) {
+        // RTLD_NOLOAD first — only look in already-loaded images
+        void *handle = dlopen(images[i], RTLD_LAZY | RTLD_NOLOAD);
+        if (!handle) {
+            handle = dlopen(images[i], RTLD_LAZY);
+        }
+        if (!handle) continue;
+
+        if (!sym1) sym1 = dlsym(handle, "CTCarrierSpaceGetSetting");
+        if (!sym2) sym2 = dlsym(handle, "CTServerConnectionSetTetheredModeEnabled");
+        if (!sym3) sym3 = dlsym(handle, "CTServerConnectionGetTetheredModeEnabled");
+    }
+
+    // Also try RTLD_DEFAULT — symbol may be in any loaded image
+    if (!sym1) sym1 = dlsym(RTLD_DEFAULT, "CTCarrierSpaceGetSetting");
+    if (!sym2) sym2 = dlsym(RTLD_DEFAULT, "CTServerConnectionSetTetheredModeEnabled");
+    if (!sym3) sym3 = dlsym(RTLD_DEFAULT, "CTServerConnectionGetTetheredModeEnabled");
+
     if (sym1) {
         MSHookFunction(sym1, (void *)&hook_CTCarrierSpaceGetSetting, (void **)&orig_CTCarrierSpaceGetSetting);
         hooked++;
         FT_DBG(@"Hooked CTCarrierSpaceGetSetting @ %p", sym1);
     }
-
-    void *sym2 = dlsym(ct, "CTServerConnectionSetTetheredModeEnabled");
     if (sym2) {
         MSHookFunction(sym2, (void *)&hook_CTServerConnectionSetTetheredModeEnabled, (void **)&orig_CTServerConnectionSetTetheredModeEnabled);
         hooked++;
         FT_DBG(@"Hooked CTServerConnectionSetTetheredModeEnabled @ %p", sym2);
     }
-
-    void *sym3 = dlsym(ct, "CTServerConnectionGetTetheredModeEnabled");
     if (sym3) {
         MSHookFunction(sym3, (void *)&hook_CTServerConnectionGetTetheredModeEnabled, (void **)&orig_CTServerConnectionGetTetheredModeEnabled);
         hooked++;
@@ -167,7 +179,9 @@ static void FTInstallTetherBypassHooks() {
 
     FT_LOG(@"Tether bypass: %d/3 hooks installed", hooked);
     if (hooked == 0) {
-        FT_LOG(@"WARNING: No tether bypass symbols found — run FTProbe to discover available symbols on this iOS version");
+        FT_LOG(@"WARNING: No tether bypass symbols found on this iOS version. "
+               "Run FTProbe (killall -9 CommCenter misd) to dump available "
+               "symbols and update hook targets.");
     }
 }
 

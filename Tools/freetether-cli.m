@@ -177,29 +177,36 @@ static void printDiagnose() {
         runCmd("pfctl -a com.freetether -s rules", pf3[0], pf3);
     }
 
-    // 4. CoreTelephony symbols
-    printf("=== CoreTelephony Symbols ===\n");
+    // 4. Symbol search (CoreTelephony + RTLD_DEFAULT)
+    printf("=== Tether-related Symbols ===\n");
     {
+        const char *syms[] = {
+            "CTCarrierSpaceGetSetting",
+            "CTCarrierSpaceSetSetting",
+            "CTServerConnectionSetTetheredModeEnabled",
+            "CTServerConnectionGetTetheredModeEnabled",
+            "CTRegistrationGetCarrierBundleInfo",
+            "CTRegistrationGetDataStatus",
+            "CTServerConnectionSetPersistentTetheringAPN",
+            NULL,
+        };
+
+        // Try CoreTelephony first
         void *ct = dlopen("/System/Library/Frameworks/CoreTelephony.framework/CoreTelephony", RTLD_LAZY);
-        if (!ct) {
-            printf("  (failed to dlopen CoreTelephony)\n");
-        } else {
-            const char *syms[] = {
-                "CTCarrierSpaceGetSetting",
-                "CTCarrierSpaceSetSetting",
-                "CTServerConnectionSetTetheredModeEnabled",
-                "CTServerConnectionGetTetheredModeEnabled",
-                "CTRegistrationGetCarrierBundleInfo",
-                "CTRegistrationGetDataStatus",
-                "CTServerConnectionSetPersistentTetheringAPN",
-                NULL,
-            };
-            for (int i = 0; syms[i]; i++) {
-                void *p = dlsym(ct, syms[i]);
-                printf("  %-50s %s\n", syms[i], p ? "FOUND" : "NOT FOUND");
+        for (int i = 0; syms[i]; i++) {
+            void *p = NULL;
+            const char *where = "NOT FOUND";
+            if (ct) p = dlsym(ct, syms[i]);
+            if (p) {
+                where = "CoreTelephony";
+            } else {
+                // Fallback: search all loaded images
+                p = dlsym(RTLD_DEFAULT, syms[i]);
+                if (p) where = "RTLD_DEFAULT";
             }
-            dlclose(ct);
+            printf("  %-50s %s\n", syms[i], where);
         }
+        if (ct) dlclose(ct);
     }
 
     // 5. Process check

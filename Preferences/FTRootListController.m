@@ -21,9 +21,9 @@
 
 // --- Network interface detection (simplified from FTNetworkRouting.x) ---
 
-// Check for an active VPN tunnel interface (utun* with IFF_UP).
-// Uses the same heuristic as FTNetworkRouting.x: look for utun interfaces
-// that are UP and have either an IPv4 address or the IFF_POINTOPOINT flag.
+// Check for an active VPN tunnel interface (utun* with IFF_UP and IPv4 address).
+// System utun interfaces (Private Relay, Wi-Fi Assist) only have IPv6 link-local
+// addresses — a real VPN always assigns an IPv4 address to the tunnel.
 + (BOOL)hasActiveVPNInterface {
     struct ifaddrs *interfaces = NULL;
     if (getifaddrs(&interfaces) != 0) return NO;
@@ -33,8 +33,8 @@
         if (ifp->ifa_addr == NULL || ifp->ifa_name == NULL) continue;
         NSString *name = [NSString stringWithUTF8String:ifp->ifa_name];
         if ([name hasPrefix:@"utun"] && (ifp->ifa_flags & IFF_UP)) {
-            BOOL hasIPv4 = (ifp->ifa_addr->sa_family == AF_INET);
-            if (hasIPv4 || (ifp->ifa_flags & IFF_POINTOPOINT)) {
+            // Only count interfaces with an actual IPv4 address assigned
+            if (ifp->ifa_addr->sa_family == AF_INET) {
                 found = YES;
                 break;
             }

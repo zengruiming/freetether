@@ -128,7 +128,7 @@ static void dumpCSymbols() {
         // Only scan CommCenter binary and key frameworks
         BOOL shouldScan = NO;
         NSArray *targets = @[@"CommCenter", @"CoreTelephony", @"MobileWiFi",
-                             @"InternetSharing", @"NetworkRelay"];
+                             @"InternetSharing", @"NetworkRelay", @"misd"];
         for (NSString *t in targets) {
             if ([name containsString:t]) { shouldScan = YES; break; }
         }
@@ -198,7 +198,8 @@ static void dumpCSymbols() {
         @"tether", @"hotspot", @"apn", @"carrier",
         @"entitlement", @"internetsharing",
         @"personalhotspot", @"provision",
-        @"carrierbundle", @"dataattach"
+        @"carrierbundle", @"dataattach",
+        @"misd", @"sharing"
     ];
 
     // Delay slightly to let CommCenter finish loading

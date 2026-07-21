@@ -8,6 +8,7 @@
         <key>Executables</key>
         <array>
             <string>CommCenter</string>
+            <string>misd</string>
         </array>
     </dict>
 </dict>

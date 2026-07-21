@@ -583,6 +583,7 @@ static void FTRouteCleanup() {
 %ctor {
     NSString *proc = [[NSProcessInfo processInfo] processName];
     if ([proc isEqualToString:@"MobileInternetSharing"] ||
+        [proc isEqualToString:@"misd"] ||
         [proc isEqualToString:@"CommCenter"]) {
         NSLog(@"[FreeTether][Route] Activating routing hooks in %@", proc);
         sRouteQueue = dispatch_queue_create("com.freetether.route", DISPATCH_QUEUE_SERIAL);
